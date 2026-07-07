@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# weight_monitor: real (non-template) config and runtime data
+config/config.yaml
+config/secrets.yaml
+data/

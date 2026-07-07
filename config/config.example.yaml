@@ -1,0 +1,33 @@
+# Copy to config.yaml and adjust for your hardware.
+# Values here rarely change; things the user tunes at runtime (feed times,
+# threshold, calibration mode) live in the SQLite `settings` table instead
+# (see weight_monitor/config.py), so they can be edited without a restart.
+
+gpio:
+  # BCM pin numbers for the HX711 breakout. Confirm during hardware bring-up
+  # (Stage 1) -- these are placeholders.
+  dout_pin: 5
+  pd_sck_pin: 6
+
+sensor:
+  samples_per_reading: 12
+  trim_outliers: 2          # drop this many highest and lowest raw samples
+  sample_interval_seconds: 0.1
+  read_retries: 3
+  read_retry_backoff_seconds: 0.5
+  hopper_max_capacity_g: 2000   # plausibility ceiling for a single delta
+
+paths:
+  database: data/weight_monitor.db
+  calibration: data/calibration.json
+  log_file: data/weight_monitor.log
+
+smtp:
+  host: smtp.gmail.com
+  port: 587
+  from_address: your_account@gmail.com
+  to_address: your_account@gmail.com
+  # password is NOT stored here -- see secrets.example.yaml
+  retry_scan_interval_minutes: 5
+
+log_level: INFO
