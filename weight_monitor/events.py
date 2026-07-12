@@ -36,8 +36,9 @@ def expected_occurrences(
     day = since.astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
     while day <= until:
         for event_type, label in labels:
-            before_ts = _local_time_today(label, day)
-            after_ts = before_ts + timedelta(minutes=settings.delay_minutes)
+            nominal_ts = _local_time_today(label, day)
+            before_ts = nominal_ts - timedelta(minutes=settings.baseline_minutes)
+            after_ts = nominal_ts + timedelta(minutes=settings.delay_minutes)
             if since <= before_ts < until:
                 occurrences.append((event_type, label, before_ts, after_ts))
         day += timedelta(days=1)
@@ -134,18 +135,23 @@ def run_after(conn: sqlite3.Connection, sensor: Sensor, event_id: int, config: S
 
 
 def should_notify(row: sqlite3.Row) -> bool:
-    """Decide whether a completed/errored event warrants an email."""
+    """Decide whether a completed/errored event warrants an email.
+
+    Control events always run and get logged (useful for the future web UI's
+    history/plot), but only email in calibration mode -- once a threshold is
+    set, their job is done and they'd otherwise just be noise every night.
+    """
     if row["status"] == "error":
         return True
     if row["status"] == "missed":
         return True
     if row["anomaly_flag"] is not None:
         return True
-    if row["event_type"] == "control":
-        return True
-    # feed event, no anomaly:
     if row["calibration_mode_at_time"]:
         return True
+    if row["event_type"] == "control":
+        return False
+    # feed event, alert mode, no anomaly:
     return row["delta_g"] is not None and row["delta_g"] < row["threshold_g_at_time"]
 
 

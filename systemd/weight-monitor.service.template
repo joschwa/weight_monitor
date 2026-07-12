@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/weight_monitor
-ExecStart=/home/pi/weight_monitor/.venv/bin/wm-daemon
+User=%USER%
+WorkingDirectory=%WORKDIR%
+ExecStart=%WORKDIR%/.venv/bin/wm-daemon
 Restart=always
 RestartSec=10
 

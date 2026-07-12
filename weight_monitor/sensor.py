@@ -32,10 +32,12 @@ class HX711RawReader:
         self._hx.reset()
 
     def read_raw(self) -> int:
-        values = self._hx.get_raw_data(times=1)
+        # the hx711 package enforces times>=2 (its min_measures); average the
+        # pair instead of requesting a single sample.
+        values = self._hx.get_raw_data(times=2)
         if not values:
             raise SensorReadError("HX711 returned no data")
-        return values[0]
+        return statistics.fmean(values)
 
 
 class FakeRawReader:

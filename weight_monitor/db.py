@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS settings (
 DEFAULT_SETTINGS = {
     "feed_times": ["08:00", "18:00"],
     "control_time": "00:00",
-    "delay_minutes": 25,
+    "baseline_minutes": 10,
+    "delay_minutes": 20,
     "threshold_g": 100,
     "calibration_mode": True,
 }

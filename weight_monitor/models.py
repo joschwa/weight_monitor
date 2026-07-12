@@ -38,6 +38,7 @@ class Event:
 class Settings:
     feed_times: list[str]
     control_time: str
+    baseline_minutes: int
     delay_minutes: int
     threshold_g: float
     calibration_mode: bool

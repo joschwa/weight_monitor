@@ -29,6 +29,7 @@ def _settings_hash(settings: Settings) -> tuple:
     return (
         tuple(settings.feed_times),
         settings.control_time,
+        settings.baseline_minutes,
         settings.delay_minutes,
         settings.threshold_g,
         settings.calibration_mode,
@@ -38,7 +39,12 @@ def _settings_hash(settings: Settings) -> tuple:
 def _run_before_job(label: str, event_type: str, conn: sqlite3.Connection, sensor: Sensor) -> None:
     settings = get_settings(conn)
     scheduled_before_ts = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    scheduled_after_ts = scheduled_before_ts + timedelta(minutes=settings.delay_minutes)
+    # scheduled_before_ts fires baseline_minutes before the nominal label time, so the
+    # after-check must add both offsets back to stay anchored at label_time + delay_minutes
+    # rather than drifting earlier along with the before-check.
+    scheduled_after_ts = scheduled_before_ts + timedelta(
+        minutes=settings.baseline_minutes + settings.delay_minutes
+    )
     event_id = create_pending_event(conn, event_type, label, scheduled_before_ts, scheduled_after_ts, settings)
     run_before(conn, sensor, event_id)
 
@@ -65,9 +71,15 @@ def _build_jobs(
 
     for event_type, label in _labels(settings):
         hour, minute = (int(x) for x in label.split(":"))
+
+        # Baseline is subtracted from a fixed reference time, then re-split into
+        # hour/minute so the "before" check happens at a fixed clock time each day
+        # (may land on the prior hour/day, e.g. 00:05 - 10min -> 23:55, which is
+        # fine for a daily cron trigger).
+        before_dt = datetime(2000, 1, 1, hour, minute) - timedelta(minutes=settings.baseline_minutes)
         scheduler.add_job(
             _run_before_job,
-            trigger=CronTrigger(hour=hour, minute=minute),
+            trigger=CronTrigger(hour=before_dt.hour, minute=before_dt.minute),
             args=[label, event_type, conn, sensor],
             id=f"{BEFORE_JOB_PREFIX}{label}",
             replace_existing=True,

@@ -109,6 +109,7 @@ def get_settings(conn: sqlite3.Connection) -> Settings:
     return Settings(
         feed_times=values["feed_times"],
         control_time=values["control_time"],
+        baseline_minutes=values["baseline_minutes"],
         delay_minutes=values["delay_minutes"],
         threshold_g=values["threshold_g"],
         calibration_mode=values["calibration_mode"],

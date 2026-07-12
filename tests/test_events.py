@@ -67,9 +67,21 @@ def test_should_notify_alert_mode_only_below_threshold():
     assert should_notify(above) is False
 
 
-def test_should_notify_control_always_true_even_in_alert_mode():
+def test_should_notify_control_true_in_calibration_mode():
+    row = {"status": "complete", "anomaly_flag": None, "event_type": "control",
+           "calibration_mode_at_time": 1, "delta_g": 2, "threshold_g_at_time": None}
+    assert should_notify(row) is True
+
+
+def test_should_notify_control_false_in_alert_mode():
     row = {"status": "complete", "anomaly_flag": None, "event_type": "control",
            "calibration_mode_at_time": 0, "delta_g": 2, "threshold_g_at_time": None}
+    assert should_notify(row) is False
+
+
+def test_should_notify_control_anomaly_true_even_in_alert_mode():
+    row = {"status": "complete", "anomaly_flag": "negative_delta", "event_type": "control",
+           "calibration_mode_at_time": 0, "delta_g": -2, "threshold_g_at_time": None}
     assert should_notify(row) is True
 
 
@@ -83,12 +95,35 @@ def test_expected_occurrences_covers_range():
     from weight_monitor.models import Settings
 
     settings = Settings(feed_times=["08:00", "18:00"], control_time="00:00",
-                         delay_minutes=25, threshold_g=100, calibration_mode=True)
+                         baseline_minutes=10, delay_minutes=25, threshold_g=100,
+                         calibration_mode=True)
     since = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
     until = since + timedelta(days=1)
     occurrences = expected_occurrences(settings, since, until)
     labels = sorted(label for _, label, _, _ in occurrences)
     assert labels == ["00:00", "08:00", "18:00"]
+
+
+def test_expected_occurrences_offsets_before_and_after_from_label():
+    from weight_monitor.models import Settings
+
+    settings = Settings(feed_times=["08:00"], control_time="23:55",
+                         baseline_minutes=10, delay_minutes=25, threshold_g=100,
+                         calibration_mode=True)
+    since = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    until = since + timedelta(days=1)
+    occurrences = expected_occurrences(settings, since, until)
+
+    feed = next(o for o in occurrences if o[1] == "08:00")
+    _, _, before_ts, after_ts = feed
+    assert before_ts.astimezone().strftime("%H:%M") == "07:50"
+    assert after_ts.astimezone().strftime("%H:%M") == "08:25"
+
+    # control label crosses midnight when baseline is subtracted
+    control = next(o for o in occurrences if o[1] == "23:55")
+    _, _, before_ts, after_ts = control
+    assert before_ts.astimezone().strftime("%H:%M") == "23:45"
+    assert after_ts.astimezone().strftime("%H:%M") == "00:20"
 
 
 def test_recover_missed_events_catches_up_stale_before_recorded(conn, config):

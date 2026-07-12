@@ -44,6 +44,25 @@ def test_after_job_cron_reflects_delay_minutes(conn, config):
     assert _field(after_control.trigger, "minute") == "15"
 
 
+def test_before_job_cron_reflects_baseline_minutes(conn, config):
+    scheduler = BackgroundScheduler()
+    sensor = make_sensor([500])
+    set_setting(conn, "feed_times", ["08:00"])
+    set_setting(conn, "control_time", "00:05")
+    set_setting(conn, "baseline_minutes", 10)
+
+    _build_jobs(scheduler, conn, sensor, config)
+
+    before_feed = scheduler.get_job("before:08:00")
+    assert _field(before_feed.trigger, "hour") == "7"
+    assert _field(before_feed.trigger, "minute") == "50"
+
+    # crosses midnight backwards: 00:05 - 10min -> 23:55 the prior day
+    before_control = scheduler.get_job("before:00:05")
+    assert _field(before_control.trigger, "hour") == "23"
+    assert _field(before_control.trigger, "minute") == "55"
+
+
 def test_rebuild_replaces_stale_jobs_when_settings_change(conn, config):
     scheduler = BackgroundScheduler()
     sensor = make_sensor([500])
