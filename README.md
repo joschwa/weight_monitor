@@ -118,6 +118,28 @@ calibration data). Both still run on schedule and get logged either way —
 sensor errors and anomalies still email regardless of mode or event type,
 and logged control data remains available for the future web UI's history.
 
+### Web UI (optional)
+
+A basic Flask app to edit settings and view event history from a browser,
+instead of SSH + `wm-cli`. Install its dependency and service the same way
+as the daemon:
+
+```bash
+pip install -e ".[webui]"
+chmod +x scripts/install_web_service.sh
+bash scripts/install_web_service.sh
+```
+
+Then visit `http://<pi-ip>:5000/` from any device on your local network.
+The page has a settings form (same keys as `wm-cli set-setting`) and a
+history section: a line chart of deltas over time (one line per feed/control
+label, with a dashed threshold line), an editable date range, and checkboxes
+to include/exclude individual labels from the chart and table below it.
+
+**No authentication** — anyone on your local network who can reach the Pi's
+IP can view data and change settings. Fine for a trusted home LAN; don't
+port-forward this to the internet.
+
 ### Useful commands reference
 
 | Command | Purpose |
@@ -129,4 +151,6 @@ and logged control data remains available for the future web UI's history.
 | `wm-cli notify-retry` | Manually flush any queued/failed notifications |
 | `systemctl status weight-monitor` | Check daemon status |
 | `journalctl -u weight-monitor -f` | Tail daemon logs |
+| `systemctl status weight-monitor-web` | Check web UI status |
+| `journalctl -u weight-monitor-web -f` | Tail web UI logs |
 

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>weight_monitor</title>
+<style>
+  body { font-family: sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; color: #222; }
+  h1 { font-size: 1.4em; }
+  h2 { font-size: 1.1em; margin-top: 2em; }
+  form.inline { display: inline; }
+  .settings-grid { display: grid; grid-template-columns: max-content 1fr; gap: 0.5em 1em; align-items: center; max-width: 500px; }
+  .settings-grid label { font-weight: 600; }
+  .settings-grid input[type=text], .settings-grid input[type=number] { width: 100%; box-sizing: border-box; }
+  .errors { background: #fdecea; border: 1px solid #e15759; color: #611a15; padding: 0.5em 1em; border-radius: 4px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 1em; align-items: center; margin: 1em 0; }
+  .filters label { margin-right: 0.5em; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+  th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
+  th { background: #f5f5f5; }
+  .chart-wrap { overflow-x: auto; }
+  button { padding: 0.4em 1em; }
+</style>
+</head>
+<body>
+<h1>weight_monitor</h1>
+
+{% if errors %}
+<div class="errors">
+  <strong>Could not save settings:</strong>
+  <ul>
+    {% for error in errors %}<li>{{ error }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<h2>Settings</h2>
+<form method="post" action="{{ url_for('webui.update_settings') }}">
+  <div class="settings-grid">
+    <label for="feed_times">Feed times</label>
+    <input type="text" id="feed_times" name="feed_times" value="{{ settings.feed_times | join(', ') }}">
+
+    <label for="control_time">Control time</label>
+    <input type="text" id="control_time" name="control_time" value="{{ settings.control_time }}">
+
+    <label for="baseline_minutes">Baseline minutes (before-check offset)</label>
+    <input type="number" id="baseline_minutes" name="baseline_minutes" value="{{ settings.baseline_minutes }}" min="0">
+
+    <label for="delay_minutes">Delay minutes (after-check offset)</label>
+    <input type="number" id="delay_minutes" name="delay_minutes" value="{{ settings.delay_minutes }}" min="0">
+
+    <label for="threshold_g">Threshold (g)</label>
+    <input type="number" id="threshold_g" name="threshold_g" value="{{ settings.threshold_g }}" min="0" step="any">
+
+    <label for="calibration_mode">Calibration mode</label>
+    <input type="checkbox" id="calibration_mode" name="calibration_mode" {% if settings.calibration_mode %}checked{% endif %}>
+  </div>
+  <p><button type="submit">Save settings</button></p>
+</form>
+
+<h2>History</h2>
+<form method="get" action="{{ url_for('webui.index') }}" class="filters">
+  <input type="hidden" name="filtered" value="1">
+  <label>From <input type="date" name="start" value="{{ start }}"></label>
+  <label>To <input type="date" name="end" value="{{ end }}"></label>
+  {% for label in available_labels %}
+    <label><input type="checkbox" name="label" value="{{ label }}" {% if label in selected_labels %}checked{% endif %}> {{ label }}</label>
+  {% endfor %}
+  <button type="submit">Apply</button>
+</form>
+
+<div class="chart-wrap">
+  {{ chart_svg | safe }}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Time</th><th>Type</th><th>Label</th><th>Status</th>
+      <th>Before (g)</th><th>After (g)</th><th>Delta (g)</th>
+      <th>Anomaly</th><th>Notified</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for event in events %}
+    <tr>
+      <td>{{ event.local_time }}</td>
+      <td>{{ event.event_type }}</td>
+      <td>{{ event.scheduled_label }}</td>
+      <td>{{ event.status }}</td>
+      <td>{{ event.before_weight_g }}</td>
+      <td>{{ event.after_weight_g }}</td>
+      <td>{{ event.delta_g }}</td>
+      <td>{{ event.anomaly_flag or "" }}</td>
+      <td>{{ "yes" if event.notification_sent else "no" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9">No events in this range.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+</body>
+</html>

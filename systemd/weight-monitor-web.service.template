@@ -1,0 +1,15 @@
+[Unit]
+Description=Pet feeder weight jam monitor - web UI
+After=network-online.target weight-monitor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%USER%
+WorkingDirectory=%WORKDIR%
+ExecStart=%WORKDIR%/.venv/bin/wm-web
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

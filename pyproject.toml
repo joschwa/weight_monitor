@@ -13,6 +13,9 @@ hardware = [
     "hx711>=1.1.2.3",
     "RPi.GPIO>=0.7.1",
 ]
+webui = [
+    "Flask>=3,<4",
+]
 dev = [
     "pytest>=8",
 ]
@@ -20,6 +23,7 @@ dev = [
 [project.scripts]
 wm-cli = "weight_monitor.cli:main"
 wm-daemon = "weight_monitor.daemon:main"
+wm-web = "weight_monitor.webui:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -27,3 +31,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["weight_monitor*"]
+
+[tool.setuptools.package-data]
+weight_monitor = ["webui/templates/*.html"]

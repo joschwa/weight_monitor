@@ -4,6 +4,7 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -101,7 +102,10 @@ def _build_jobs(
 
 
 def start_scheduler(conn: sqlite3.Connection, sensor: Sensor, config: StaticConfig) -> BackgroundScheduler:
-    scheduler = BackgroundScheduler()
+    # A single dedicated worker thread: all jobs share one sqlite3.Connection
+    # (check_same_thread=False in db.connect()), which is only safe if access
+    # is serialized rather than concurrent across multiple worker threads.
+    scheduler = BackgroundScheduler(executors={"default": ThreadPoolExecutor(max_workers=1)})
     state = {"hash": _build_jobs(scheduler, conn, sensor, config)}
 
     def settings_poll() -> None:

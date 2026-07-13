@@ -87,7 +87,7 @@ def _cmd_status(args) -> None:
     db.init_db(conn)
     settings = get_settings(conn)
     print("Settings:")
-    for field in ("feed_times", "control_time", "delay_minutes", "threshold_g", "calibration_mode"):
+    for field in ("feed_times", "control_time", "baseline_minutes", "delay_minutes", "threshold_g", "calibration_mode"):
         print(f"  {field}: {getattr(settings, field)}")
 
     print(f"\nLast {args.limit} events:")
