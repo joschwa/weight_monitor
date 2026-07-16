@@ -140,10 +140,12 @@ def should_notify(row: sqlite3.Row) -> bool:
     Control events always run and get logged (useful for the future web UI's
     history/plot), but only email in calibration mode -- once a threshold is
     set, their job is done and they'd otherwise just be noise every night.
+
+    `status='missed'` rows are deliberately not handled here -- they're
+    batched into a single grouped summary email by
+    `notifier.summarize_and_send_missed()` instead of one email each.
     """
     if row["status"] == "error":
-        return True
-    if row["status"] == "missed":
         return True
     if row["anomaly_flag"] is not None:
         return True

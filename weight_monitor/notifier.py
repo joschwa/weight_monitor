@@ -22,8 +22,6 @@ def build_message(row: sqlite3.Row) -> tuple[str, str]:
 
     if row["status"] == "error":
         subject = f"[WeightMonitor] SENSOR ERROR: {row['event_type']} {label}"
-    elif row["status"] == "missed":
-        subject = f"[WeightMonitor] MISSED: {row['event_type']} {label} (monitor was offline)"
     elif row["anomaly_flag"] == "negative_delta":
         subject = f"[WeightMonitor] ANOMALY: {row['event_type']} {label} — negative delta {row['delta_g']:.0f}g"
     elif row["anomaly_flag"] == "implausible_spike":
@@ -57,8 +55,7 @@ def build_message(row: sqlite3.Row) -> tuple[str, str]:
     return subject, body
 
 
-def send(config: StaticConfig, conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
-    subject, body = build_message(row)
+def _smtp_send(config: StaticConfig, subject: str, body: str) -> bool:
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = config.smtp_from_address
@@ -70,12 +67,59 @@ def send(config: StaticConfig, conn: sqlite3.Connection, row: sqlite3.Row) -> bo
             smtp.login(config.smtp_from_address, config.smtp_password)
             smtp.send_message(msg)
     except (OSError, smtplib.SMTPException) as exc:
-        logger.warning("failed to send notification for event %s: %s", row["id"], exc)
+        logger.warning("failed to send %r: %s", subject, exc)
+        return False
+    return True
+
+
+def send(config: StaticConfig, conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    subject, body = build_message(row)
+    if not _smtp_send(config, subject, body):
         return False
 
     conn.execute(
         "UPDATE events SET notification_sent=1, notification_sent_ts=? WHERE id=?",
         (datetime.now(timezone.utc).isoformat(), row["id"]),
+    )
+    conn.commit()
+    return True
+
+
+def summarize_and_send_missed(config: StaticConfig, conn: sqlite3.Connection) -> bool:
+    """Batch every not-yet-notified `missed` row into one grouped summary email.
+
+    Driven entirely by `notification_sent`, not by a single recovery pass --
+    if a send fails here, whatever rows are still unsent next time (plus any
+    newly found since) get combined into the next summary, so nothing is
+    dropped or double-counted regardless of how many restarts happen in
+    between.
+    """
+    rows = conn.execute(
+        "SELECT * FROM events WHERE status='missed' AND notification_sent=0"
+    ).fetchall()
+    if not rows:
+        return False
+
+    counts: dict[tuple[str, str], int] = {}
+    for row in rows:
+        key = (row["event_type"], row["scheduled_label"] or row["event_type"])
+        counts[key] = counts.get(key, 0) + 1
+
+    window_start = min(row["scheduled_before_ts"] for row in rows)
+    window_end = max(row["scheduled_before_ts"] for row in rows)
+
+    subject = f"[WeightMonitor] {len(rows)} missed weigh-in(s) ({_fmt_local(window_start)} – {_fmt_local(window_end)})"
+    lines = [f"{event_type} {label}: {count} missed" for (event_type, label), count in sorted(counts.items())]
+    body = "\n".join(lines)
+
+    if not _smtp_send(config, subject, body):
+        return False
+
+    ids = [row["id"] for row in rows]
+    placeholders = ",".join("?" for _ in ids)
+    conn.execute(
+        f"UPDATE events SET notification_sent=1, notification_sent_ts=? WHERE id IN ({placeholders})",
+        (datetime.now(timezone.utc).isoformat(), *ids),
     )
     conn.commit()
     return True
@@ -88,10 +132,13 @@ def scan_and_retry(config: StaticConfig, conn: sqlite3.Connection) -> int:
     """
     from weight_monitor.events import should_notify
 
-    rows = conn.execute(
-        "SELECT * FROM events WHERE notification_sent=0 AND status IN ('complete','delayed','error','missed')"
-    ).fetchall()
     sent = 0
+    if summarize_and_send_missed(config, conn):
+        sent += 1
+
+    rows = conn.execute(
+        "SELECT * FROM events WHERE notification_sent=0 AND status IN ('complete','delayed','error')"
+    ).fetchall()
     for row in rows:
         if should_notify(row) and send(config, conn, row):
             sent += 1
