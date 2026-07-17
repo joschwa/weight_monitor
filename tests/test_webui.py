@@ -38,16 +38,24 @@ def test_index_shows_seeded_event_delta(conn, config):
     assert b"120" in r.data  # 500 - 380
 
 
-def test_settings_post_valid_updates_table(conn, config):
-    client = _client(conn, config)
-    r = client.post("/settings", data={
+def _valid_settings_form(**overrides):
+    form = {
         "feed_times": "07:00, 19:00",
         "control_time": "01:00",
         "baseline_minutes": "5",
         "delay_minutes": "15",
         "threshold_g": "150",
-        # calibration_mode omitted -> unchecked -> False
-    })
+        "feeds_left_equal_notify": "10",
+        "feeds_left_below_notify": "5",
+        # calibration_mode / refill_countdown_enabled omitted -> unchecked -> False
+    }
+    form.update(overrides)
+    return form
+
+
+def test_settings_post_valid_updates_table(conn, config):
+    client = _client(conn, config)
+    r = client.post("/settings", data=_valid_settings_form())
     assert r.status_code == 302
     settings = get_settings(conn)
     assert settings.feed_times == ["07:00", "19:00"]
@@ -61,13 +69,7 @@ def test_settings_post_valid_updates_table(conn, config):
 def test_settings_post_invalid_feed_times_leaves_table_unchanged(conn, config):
     before = get_settings(conn)
     client = _client(conn, config)
-    r = client.post("/settings", data={
-        "feed_times": "not-a-time",
-        "control_time": "00:00",
-        "baseline_minutes": "10",
-        "delay_minutes": "20",
-        "threshold_g": "100",
-    })
+    r = client.post("/settings", data=_valid_settings_form(feed_times="not-a-time"))
     assert r.status_code == 400
     assert b"not a valid HH:MM" in r.data
     after = get_settings(conn)
@@ -76,15 +78,43 @@ def test_settings_post_invalid_feed_times_leaves_table_unchanged(conn, config):
 
 def test_settings_post_negative_threshold_rejected(conn, config):
     client = _client(conn, config)
-    r = client.post("/settings", data={
-        "feed_times": "08:00",
-        "control_time": "00:00",
-        "baseline_minutes": "10",
-        "delay_minutes": "20",
-        "threshold_g": "-5",
-    })
+    r = client.post("/settings", data=_valid_settings_form(threshold_g="-5"))
     assert r.status_code == 400
     assert b"must be &gt; 0" in r.data or b"must be > 0" in r.data
+
+
+def test_settings_post_enables_countdown_and_sets_feeder_weight(conn, config):
+    client = _client(conn, config)
+    r = client.post("/settings", data=_valid_settings_form(
+        refill_countdown_enabled="on", feeder_empty_weight_g="850",
+    ))
+    assert r.status_code == 302
+    settings = get_settings(conn)
+    assert settings.refill_countdown_enabled is True
+    assert settings.feeder_empty_weight_g == 850
+    assert settings.feeder_empty_weight_set_at is not None
+
+
+def test_settings_post_blank_feeder_weight_leaves_existing_value(conn, config):
+    client = _client(conn, config)
+    client.post("/settings", data=_valid_settings_form(
+        refill_countdown_enabled="on", feeder_empty_weight_g="850",
+    ))
+    set_at_first = get_settings(conn).feeder_empty_weight_set_at
+
+    client.post("/settings", data=_valid_settings_form(
+        refill_countdown_enabled="on", feeder_empty_weight_g="",
+    ))
+    settings = get_settings(conn)
+    assert settings.feeder_empty_weight_g == 850
+    assert settings.feeder_empty_weight_set_at == set_at_first
+
+
+def test_settings_post_negative_feeds_left_notify_rejected(conn, config):
+    client = _client(conn, config)
+    r = client.post("/settings", data=_valid_settings_form(feeds_left_equal_notify="-1"))
+    assert r.status_code == 400
+    assert b"feeds_left_equal_notify" in r.data
 
 
 def test_label_filter_excludes_other_labels(conn, config):

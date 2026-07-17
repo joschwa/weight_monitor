@@ -13,12 +13,14 @@ from __future__ import annotations
 import statistics
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from weight_monitor import db
 from weight_monitor.calibration import Calibration
-from weight_monitor.config import StaticConfig
+from weight_monitor.config import StaticConfig, get_settings, set_setting
 from weight_monitor.sensor import HX711RawReader
 
 SAMPLES = 20
@@ -65,6 +67,51 @@ def main() -> None:
     calibration = Calibration.create(offset=offset, scale=scale, reference_weights_g=reference_weights)
     calibration.save(config.calibration_path)
     print(f"Saved calibration to {config.calibration_path}")
+
+    _maybe_configure_feed_countdown(reader, calibration, config)
+
+
+def _weigh_empty_feeder(reader, calibration: Calibration) -> float:
+    input("Place the empty feeder (no food) on the platform, then press Enter...")
+    raw = filtered_raw_read(reader)
+    grams = calibration.to_grams(raw)
+    print(f"  empty feeder weight: {grams:.1f}g")
+    return grams
+
+
+def _maybe_configure_feed_countdown(reader, calibration: Calibration, config: StaticConfig) -> None:
+    conn = db.connect(config.database_path)
+    db.init_db(conn)
+    settings = get_settings(conn)
+
+    if settings.feeder_empty_weight_g is not None and settings.refill_countdown_enabled:
+        print(f"\nExisting empty-feeder weight on file: {settings.feeder_empty_weight_g:.1f}g")
+        choice = input("Continue using it, or replace? [continue/replace]: ").strip().lower()
+        if choice == "replace":
+            weight = _weigh_empty_feeder(reader, calibration)
+            set_setting(conn, "feeder_empty_weight_g", weight)
+            set_setting(conn, "feeder_empty_weight_set_at", datetime.now(timezone.utc).isoformat())
+            set_setting(conn, "feeds_left_equal_alerted", False)
+            set_setting(conn, "feeds_left_below_alerted", False)
+            print("Feed countdown tracking updated.")
+        else:
+            print(
+                "Keeping existing empty-feeder weight. Feed countdown tracking stays enabled "
+                "-- reminder thresholds re-arm automatically once feeds left recovers above them."
+            )
+    else:
+        answer = input("\nEnable feed countdown tracking by weighing the empty feeder now? [y/N]: ").strip().lower()
+        if answer == "y":
+            weight = _weigh_empty_feeder(reader, calibration)
+            set_setting(conn, "feeder_empty_weight_g", weight)
+            set_setting(conn, "feeder_empty_weight_set_at", datetime.now(timezone.utc).isoformat())
+            set_setting(conn, "feeds_left_equal_alerted", False)
+            set_setting(conn, "feeds_left_below_alerted", False)
+            set_setting(conn, "refill_countdown_enabled", True)
+            print("Feed countdown tracking enabled.")
+        else:
+            set_setting(conn, "refill_countdown_enabled", False)
+            print("Feed countdown tracking left disabled.")
 
 
 if __name__ == "__main__":

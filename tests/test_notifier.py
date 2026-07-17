@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from weight_monitor.config import get_settings
+from weight_monitor.config import get_settings, set_setting
 from weight_monitor.events import create_pending_event, run_after, run_before
-from weight_monitor.notifier import scan_and_retry, send, summarize_and_send_missed
+from weight_monitor.notifier import build_message, scan_and_retry, send, send_refill_alert, summarize_and_send_missed
 
 from .conftest import make_sensor
 
@@ -122,3 +122,71 @@ def test_scan_and_retry_sends_one_summary_plus_individual_events(mock_smtp_cls, 
     sent = scan_and_retry(config, conn)
     assert sent == 2  # one summary email + one individual event email
     assert mock_smtp.send_message.call_count == 2
+
+
+def test_build_message_includes_feeds_remaining_when_tracked(conn, config):
+    set_setting(conn, "refill_countdown_enabled", True)
+    set_setting(conn, "feeder_empty_weight_g", 0)
+    row = _completed_event(conn, config, before_g=600, after_g=500)
+    row = conn.execute("SELECT * FROM events WHERE id=?", (row["id"],)).fetchone()
+    assert row["feeds_left_at_time"] is not None
+
+    _, body = build_message(row)
+    assert f"Feeds remaining:  {row['feeds_left_at_time']}" in body
+
+
+def test_build_message_omits_feeds_remaining_when_not_tracked(conn, config):
+    row = _completed_event(conn, config, before_g=600, after_g=500)
+    row = conn.execute("SELECT * FROM events WHERE id=?", (row["id"],)).fetchone()
+    assert row["feeds_left_at_time"] is None
+
+    _, body = build_message(row)
+    assert "Feeds remaining" not in body
+
+
+@patch("smtplib.SMTP")
+def test_send_refill_alert_sends_urgent_email_and_marks_sent(mock_smtp_cls, conn, config):
+    mock_smtp = MagicMock()
+    mock_smtp_cls.return_value.__enter__.return_value = mock_smtp
+    set_setting(conn, "refill_countdown_enabled", True)
+    set_setting(conn, "feeder_empty_weight_g", 0)
+    set_setting(conn, "feeds_left_below_notify", 5)
+
+    row = _completed_event(conn, config, before_g=600, after_g=400)  # delta=200 -> feeds_left=floor(400/200)=2 < 5
+    row = conn.execute("SELECT * FROM events WHERE id=?", (row["id"],)).fetchone()
+    assert row["refill_alert_type"] == "below"
+
+    assert send_refill_alert(config, conn, row) is True
+    sent_msg = mock_smtp.send_message.call_args[0][0]
+    assert "LOW FOOD" in sent_msg["Subject"]
+    assert "2" in sent_msg["Subject"]
+
+    updated = conn.execute("SELECT refill_alert_sent FROM events WHERE id=?", (row["id"],)).fetchone()
+    assert updated["refill_alert_sent"] == 1
+
+
+@patch("smtplib.SMTP")
+def test_scan_and_retry_sends_refill_alert_even_when_routine_email_suppressed(mock_smtp_cls, conn, config):
+    """Alert mode + delta above threshold -> the routine per-event email is
+    suppressed, but a refill alert must still go out independently."""
+    mock_smtp = MagicMock()
+    mock_smtp_cls.return_value.__enter__.return_value = mock_smtp
+    set_setting(conn, "calibration_mode", False)
+    set_setting(conn, "threshold_g", 50)
+    set_setting(conn, "refill_countdown_enabled", True)
+    set_setting(conn, "feeder_empty_weight_g", 0)
+    set_setting(conn, "feeds_left_below_notify", 5)
+
+    row = _completed_event(conn, config, before_g=600, after_g=400)  # delta=200, well above threshold=50
+    row = conn.execute("SELECT * FROM events WHERE id=?", (row["id"],)).fetchone()
+    assert row["refill_alert_type"] == "below"
+
+    sent = scan_and_retry(config, conn)
+    assert sent == 1
+    assert mock_smtp.send_message.call_count == 1
+
+    updated = conn.execute(
+        "SELECT notification_sent, refill_alert_sent FROM events WHERE id=?", (row["id"],)
+    ).fetchone()
+    assert updated["notification_sent"] == 0  # routine email correctly suppressed
+    assert updated["refill_alert_sent"] == 1  # refill alert still sent

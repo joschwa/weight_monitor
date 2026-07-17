@@ -17,6 +17,12 @@ sensor:
   read_retry_backoff_seconds: 0.5
   hopper_max_capacity_g: 2000   # plausibility ceiling for a single delta
 
+countdown:
+  # Sample cap for the feeds-remaining average (see `settings` table for the
+  # runtime feed-countdown toggle/thresholds -- this is just a rarely-changed
+  # tuning constant, same category as hopper_max_capacity_g above).
+  max_delta_samples: 150
+
 paths:
   database: data/weight_monitor.db
   calibration: data/calibration.json

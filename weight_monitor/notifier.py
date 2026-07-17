@@ -51,6 +51,8 @@ def build_message(row: sqlite3.Row) -> tuple[str, str]:
     ]
     if row["error_message"]:
         lines.append(f"Error:            {row['error_message']}")
+    if row["feeds_left_at_time"] is not None:
+        lines.append(f"Feeds remaining:  {row['feeds_left_at_time']}")
     body = "\n".join(lines)
     return subject, body
 
@@ -125,6 +127,33 @@ def summarize_and_send_missed(config: StaticConfig, conn: sqlite3.Connection) ->
     return True
 
 
+def build_refill_alert_message(row: sqlite3.Row) -> tuple[str, str]:
+    feeds_left = row["feeds_left_at_time"]
+    if row["refill_alert_type"] == "below":
+        subject = f"[WeightMonitor] !!! LOW FOOD: {feeds_left} feed(s) left — refill soon !!!"
+    else:
+        subject = f"[WeightMonitor] Reminder: {feeds_left} feed(s) left"
+
+    label = row["scheduled_label"] or row["event_type"]
+    lines = [
+        f"Feeds remaining: {feeds_left}",
+        f"Threshold type:  {row['refill_alert_type']}",
+        f"Detected at:     {row['event_type']} {label}, {_fmt_local(row['scheduled_before_ts'])}",
+        f"Current weight:  {row['after_weight_g']}",
+    ]
+    return subject, "\n".join(lines)
+
+
+def send_refill_alert(config: StaticConfig, conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    subject, body = build_refill_alert_message(row)
+    if not _smtp_send(config, subject, body):
+        return False
+
+    conn.execute("UPDATE events SET refill_alert_sent=1 WHERE id=?", (row["id"],))
+    conn.commit()
+    return True
+
+
 def scan_and_retry(config: StaticConfig, conn: sqlite3.Connection) -> int:
     """Send notifications for any event that needs one but hasn't gotten one yet.
 
@@ -142,4 +171,14 @@ def scan_and_retry(config: StaticConfig, conn: sqlite3.Connection) -> int:
     for row in rows:
         if should_notify(row) and send(config, conn, row):
             sent += 1
+
+    # Refill alerts are independent of the routine notification_sent gate above
+    # (must fire even when the routine per-event email is suppressed).
+    refill_rows = conn.execute(
+        "SELECT * FROM events WHERE refill_alert_type IS NOT NULL AND refill_alert_sent=0"
+    ).fetchall()
+    for row in refill_rows:
+        if send_refill_alert(config, conn, row):
+            sent += 1
+
     return sent

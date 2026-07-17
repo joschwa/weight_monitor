@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import statistics
 from datetime import datetime, timedelta, timezone
 
-from weight_monitor.config import StaticConfig, get_settings
+from weight_monitor.config import StaticConfig, get_settings, set_setting
 from weight_monitor.models import Settings
 from weight_monitor.sensor import Sensor, SensorReadError
 
 logger = logging.getLogger(__name__)
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _local_time_today(label: str, on: datetime) -> datetime:
@@ -130,6 +133,111 @@ def run_after(conn: sqlite3.Connection, sensor: Sensor, event_id: int, config: S
             anomaly_flag=?, status=?
         WHERE id=?""",
         (after_weight, now.isoformat(), delta, delay_minutes_used, anomaly, status, event_id),
+    )
+    conn.commit()
+
+    if row["event_type"] == "feed":
+        _update_feed_countdown(conn, config, event_id, after_weight)
+
+
+def _remove_iqr_outliers(values: list[float], k: float = 1.5) -> list[float]:
+    if len(values) < 4:
+        return values
+    q1, _, q3 = statistics.quantiles(values, n=4)
+    iqr = q3 - q1
+    lower, upper = q1 - k * iqr, q3 + k * iqr
+    return [v for v in values if lower <= v <= upper]
+
+
+def compute_avg_feed_delta(conn: sqlite3.Connection, since: datetime, max_samples: int) -> float | None:
+    """Mean of up to `max_samples` most recent feed-event deltas since `since`,
+    with IQR outlier removal. Control deltas are deliberately excluded --
+    they're noise-floor measurements, not representative of consumption."""
+    rows = conn.execute(
+        """SELECT delta_g FROM events
+           WHERE event_type='feed' AND delta_g IS NOT NULL AND scheduled_before_ts >= ?
+           ORDER BY scheduled_before_ts DESC LIMIT ?""",
+        (since.isoformat(), max_samples),
+    ).fetchall()
+    deltas = [r["delta_g"] for r in rows]
+    if not deltas:
+        return None
+    filtered = _remove_iqr_outliers(deltas)
+    if not filtered:
+        return None
+    return statistics.fmean(filtered)
+
+
+def _countdown_since(settings: Settings) -> datetime:
+    if settings.feeder_empty_weight_set_at is None:
+        return _EPOCH
+    return datetime.fromisoformat(settings.feeder_empty_weight_set_at)
+
+
+def compute_feeds_left(
+    conn: sqlite3.Connection, settings: Settings, current_weight_g: float, max_delta_samples: int
+) -> int | None:
+    if not settings.refill_countdown_enabled or settings.feeder_empty_weight_g is None:
+        return None
+    avg_delta = compute_avg_feed_delta(conn, _countdown_since(settings), max_delta_samples)
+    if not avg_delta or avg_delta <= 0:
+        return None
+    remaining_food_g = max(0.0, current_weight_g - settings.feeder_empty_weight_g)
+    return int(remaining_food_g // avg_delta)
+
+
+def _check_and_update_alert_state(conn: sqlite3.Connection, settings: Settings, feeds_left: int) -> str | None:
+    """Returns the alert type ('equal'|'below') to fire for this reading, if
+    any, and persists the "already alerted" hysteresis state.
+
+    Each threshold fires once per crossing, then re-arms automatically once
+    feeds_left recovers back above it (e.g. a real refill) -- no dependency
+    on re-running scripts/calibrate.py to reset anything.
+    """
+    alert_type = None
+
+    if feeds_left < settings.feeds_left_below_notify:
+        if not settings.feeds_left_below_alerted:
+            alert_type = "below"
+            set_setting(conn, "feeds_left_below_alerted", True)
+    elif settings.feeds_left_below_alerted:
+        set_setting(conn, "feeds_left_below_alerted", False)
+
+    # below is more urgent, so it takes priority if both conditions somehow
+    # match on the same reading.
+    if alert_type is None and feeds_left == settings.feeds_left_equal_notify:
+        if not settings.feeds_left_equal_alerted:
+            alert_type = "equal"
+            set_setting(conn, "feeds_left_equal_alerted", True)
+    elif feeds_left > settings.feeds_left_equal_notify and settings.feeds_left_equal_alerted:
+        set_setting(conn, "feeds_left_equal_alerted", False)
+
+    return alert_type
+
+
+def _update_feed_countdown(
+    conn: sqlite3.Connection, config: StaticConfig, event_id: int, current_weight_g: float
+) -> None:
+    """Snapshot feeds-remaining onto this feed event, and flag a new
+    threshold crossing (if any) for `notifier.send_refill_alert` to pick up.
+
+    Runs unconditionally after every feed event's delta is computed,
+    independent of `should_notify()` -- the refill alert must still fire
+    even when the routine per-event email is suppressed (alert mode, delta
+    above threshold).
+    """
+    settings = get_settings(conn)
+    if not settings.refill_countdown_enabled:
+        return
+    feeds_left = compute_feeds_left(conn, settings, current_weight_g, config.countdown_max_delta_samples)
+    if feeds_left is None:
+        return
+
+    refill_alert_type = _check_and_update_alert_state(conn, settings, feeds_left)
+
+    conn.execute(
+        "UPDATE events SET feeds_left_at_time=?, refill_alert_type=? WHERE id=?",
+        (feeds_left, refill_alert_type, event_id),
     )
     conn.commit()
 

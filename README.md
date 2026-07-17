@@ -38,7 +38,7 @@ https://myaccount.google.com/apppasswords — requires 2-Step Verification).
 python scripts/calibrate.py
 ```
 
-Follow the prompts: tare with the platform empty, then place a known reference weight. This writes `data/calibration.json`.
+Follow the prompts: tare with the platform empty, then place a known reference weight. This writes `data/calibration.json`. At the end it also offers to set up feed countdown tracking — see "Feed countdown / refill reminders" below; you can skip this and enable it later by re-running the script.
 
 ### 4. Run tests (if required)
 
@@ -117,6 +117,23 @@ threshold, and control events stop emailing entirely (their job was
 calibration data). Both still run on schedule and get logged either way —
 sensor errors and anomalies still email regardless of mode or event type,
 and logged control data remains available for the future web UI's history.
+
+### Feed countdown / refill reminders (optional)
+
+Tracks roughly how many feeds' worth of food are left in the hopper, and
+emails you before you run out.
+
+**Enable it** by weighing the completely empty feeder (no food) when
+prompted at the end of `python scripts/calibrate.py` — this sets
+`feeder_empty_weight_g` and turns on `refill_countdown_enabled`. You can also enable/disable it directly:
+
+```bash
+wm-cli set-setting refill_countdown_enabled true
+wm-cli set-setting feeder_empty_weight_g 850
+wm-cli set-setting feeds_left_equal_notify 10   # heads-up reminder at exactly N feeds left
+wm-cli set-setting feeds_left_below_notify 5    # alert once feeds left drops below M
+```
+
 
 ### Web UI (optional)
 

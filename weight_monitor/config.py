@@ -59,6 +59,12 @@ class StaticConfig:
         return self._data["sensor"]["read_retry_backoff_seconds"]
 
     @property
+    def countdown_max_delta_samples(self) -> int:
+        # .get() with a default: existing deployed config.yaml files (gitignored,
+        # not auto-updated by a code pull) predate this section.
+        return self._data.get("countdown", {}).get("max_delta_samples", 150)
+
+    @property
     def hopper_max_capacity_g(self) -> float:
         return self._data["sensor"]["hopper_max_capacity_g"]
 
@@ -113,6 +119,13 @@ def get_settings(conn: sqlite3.Connection) -> Settings:
         delay_minutes=values["delay_minutes"],
         threshold_g=values["threshold_g"],
         calibration_mode=values["calibration_mode"],
+        refill_countdown_enabled=values["refill_countdown_enabled"],
+        feeder_empty_weight_g=values["feeder_empty_weight_g"],
+        feeder_empty_weight_set_at=values["feeder_empty_weight_set_at"],
+        feeds_left_equal_notify=values["feeds_left_equal_notify"],
+        feeds_left_below_notify=values["feeds_left_below_notify"],
+        feeds_left_equal_alerted=values["feeds_left_equal_alerted"],
+        feeds_left_below_alerted=values["feeds_left_below_alerted"],
     )
 
 

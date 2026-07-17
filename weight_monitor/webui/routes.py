@@ -65,6 +65,22 @@ def _parse_positive_number(raw: str, field: str, errors: list[str]) -> float | N
     return value
 
 
+def _parse_optional_nonneg_number(raw: str, field: str, errors: list[str]) -> tuple[bool, float | None]:
+    """Returns (was_provided, value). Blank input means 'leave unchanged'."""
+    raw = raw.strip()
+    if not raw:
+        return False, None
+    try:
+        value = float(raw)
+    except ValueError:
+        errors.append(f"{field}: {raw!r} is not a number")
+        return True, None
+    if value < 0:
+        errors.append(f"{field}: must be >= 0")
+        return True, None
+    return True, value
+
+
 def _local_midnight(d: date) -> datetime:
     """Local midnight of `d`, tz-aware using the system's current UTC offset."""
     now_local = datetime.now().astimezone()
@@ -164,6 +180,13 @@ def update_settings():
     threshold_g = _parse_positive_number(form.get("threshold_g", ""), "threshold_g", errors)
     calibration_mode = form.get("calibration_mode") == "on"
 
+    refill_countdown_enabled = form.get("refill_countdown_enabled") == "on"
+    feeder_weight_provided, feeder_empty_weight_g = _parse_optional_nonneg_number(
+        form.get("feeder_empty_weight_g", ""), "feeder_empty_weight_g", errors
+    )
+    feeds_left_equal_notify = _parse_nonneg_int(form.get("feeds_left_equal_notify", ""), "feeds_left_equal_notify", errors)
+    feeds_left_below_notify = _parse_nonneg_int(form.get("feeds_left_below_notify", ""), "feeds_left_below_notify", errors)
+
     if errors:
         settings = get_settings(conn)
         available_labels = _available_labels(conn)
@@ -186,5 +209,16 @@ def update_settings():
     set_setting(conn, "delay_minutes", delay_minutes)
     set_setting(conn, "threshold_g", threshold_g)
     set_setting(conn, "calibration_mode", calibration_mode)
+    set_setting(conn, "refill_countdown_enabled", refill_countdown_enabled)
+    set_setting(conn, "feeds_left_equal_notify", feeds_left_equal_notify)
+    set_setting(conn, "feeds_left_below_notify", feeds_left_below_notify)
+
+    if feeder_weight_provided and feeder_empty_weight_g != get_settings(conn).feeder_empty_weight_g:
+        set_setting(conn, "feeder_empty_weight_g", feeder_empty_weight_g)
+        set_setting(conn, "feeder_empty_weight_set_at", datetime.now(timezone.utc).isoformat())
+        # Manual reset option alongside the automatic recovery-based one in
+        # events._check_and_update_alert_state.
+        set_setting(conn, "feeds_left_equal_alerted", False)
+        set_setting(conn, "feeds_left_below_alerted", False)
 
     return redirect(url_for("webui.index"))

@@ -87,7 +87,10 @@ def _cmd_status(args) -> None:
     db.init_db(conn)
     settings = get_settings(conn)
     print("Settings:")
-    for field in ("feed_times", "control_time", "baseline_minutes", "delay_minutes", "threshold_g", "calibration_mode"):
+    for field in (
+        "feed_times", "control_time", "baseline_minutes", "delay_minutes", "threshold_g", "calibration_mode",
+        "refill_countdown_enabled", "feeder_empty_weight_g", "feeds_left_equal_notify", "feeds_left_below_notify",
+    ):
         print(f"  {field}: {getattr(settings, field)}")
 
     print(f"\nLast {args.limit} events:")
@@ -98,7 +101,7 @@ def _cmd_status(args) -> None:
         print(
             f"  #{row['id']} {row['event_type']:7s} {row['scheduled_label']:5s} "
             f"status={row['status']:16s} delta={row['delta_g']} anomaly={row['anomaly_flag']} "
-            f"notified={bool(row['notification_sent'])}"
+            f"notified={bool(row['notification_sent'])} feeds_left={row['feeds_left_at_time']}"
         )
 
 
